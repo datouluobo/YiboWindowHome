@@ -21,9 +21,10 @@ std::optional<RECT> detectAndrowsMinimize(std::span<const std::uint32_t> pixels,
     }
     for(int y=top;y<bottom;++y) {
         for(int x=0;x<width;++x) {
-            auto p=pixels[size_t(y)*width+x]; int a=p&255,b=(p>>8)&255,c=(p>>16)&255;
-            // Native glyph strokes are neutral; exclude the blue overlay surface.
-            if(std::max({a,b,c})-std::min({a,b,c})<45&&std::abs(gray(p)-background[x])>=24) mask[size_t(y)*width+x]=1;
+            auto p=pixels[size_t(y)*width+x];
+            // The sidebar toggle turns blue when expanded. Column background
+            // subtraction still removes solid overlay fills, preserving glyphs.
+            if(std::abs(gray(p)-background[x])>=24) mask[size_t(y)*width+x]=1;
         }
     }
     std::vector<RECT> components; std::vector<int> queue;
@@ -62,7 +63,10 @@ std::optional<RECT> detectAndrowsMinimize(std::span<const std::uint32_t> pixels,
         if(std::abs((cc-cb)-2*spacing)>2*tolerance||std::abs((cd-cc)-2*spacing)>2*tolerance) continue;
         if(std::abs((b.top+b.bottom)-(a.top+a.bottom))>2*tolerance||std::abs((c.top+c.bottom)-(a.top+a.bottom))>2*tolerance) continue;
         int trailing=width-(cd+1)/2;
-        if(trailing<spacing/3||trailing>spacing) continue;
+        // An expanded emulator toolbar extends the frame beyond the caption's
+        // sidebar toggle. Keep measuring the four glyphs, allowing that extra
+        // strip without treating it as part of a caption button.
+        if(trailing<spacing/3||trailing>spacing+MulDiv(64,dpi,96)) continue;
         int left=(ca-spacing)/2;
         if(left<0) continue;
         RECT result{left,0,left+spacing,height};
@@ -89,7 +93,7 @@ std::optional<RECT> measureAndrowsMinimize(HWND window,RECT title,UINT dpi) {
     if(!same) cache={window,pid,width,height,dpi,0,{}};
     auto absolute=[&]() -> std::optional<RECT> { if(!cache.relative) return {}; auto r=*cache.relative; OffsetRect(&r,title.left,title.top); return r; };
     if(GetForegroundWindow()!=window) return absolute();
-    if(same&&GetTickCount64()-cache.sampled<(cache.relative?1000:50)) return absolute();
+    if(same&&GetTickCount64()-cache.sampled<50) return absolute();
     cache.sampled=GetTickCount64();
     int cropWidth=std::min({width,MulDiv(280,dpi,96),1024});
     if(cropWidth<1||height<1||height>MulDiv(96,dpi,96)) return {};
@@ -109,7 +113,8 @@ std::optional<RECT> measureAndrowsMinimize(HWND window,RECT title,UINT dpi) {
         POINT center{title.left+(measured->left+measured->right)/2,title.top+height/2};
         HWND hit=WindowFromPoint(center);
         if(hit&&GetAncestor(hit,GA_ROOT)==window) cache.relative=measured;
-    }
+        else cache.relative.reset();
+    } else if(ok&&GetForegroundWindow()==window) cache.relative.reset();
     return absolute();
 }
 }

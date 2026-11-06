@@ -1,6 +1,7 @@
 #include "state.h"
 #include "preview.h"
 #include "window_ops.h"
+#include "emulator_layout.h"
 #include <atomic>
 #include <future>
 #include <thread>
@@ -10,8 +11,14 @@
 
 namespace {
 std::atomic_bool stall{},minimum{},stallPosition{};
+std::atomic_int resizeStage{};
+std::atomic_bool constrainNativeResize{};
 HANDLE releaseMessage{};
 LRESULT CALLBACK procedure(HWND w,UINT msg,WPARAM p,LPARAM l){
+    if(msg==WM_ENTERSIZEMOVE)resizeStage=1;
+    if(msg==WM_SIZING&&resizeStage==1&&p==WMSZ_BOTTOMRIGHT&&l){RECT actual{};GetWindowRect(w,&actual);if(EqualRect(&actual,reinterpret_cast<RECT*>(l)))resizeStage=2;}
+    if(msg==WM_EXITSIZEMOVE&&resizeStage==2)resizeStage=3;
+    if(msg==WM_SIZING&&constrainNativeResize&&l){auto rect=reinterpret_cast<RECT*>(l);rect->right=rect->left+520;rect->bottom=rect->top+360;return TRUE;}
     if(msg==WM_NULL&&stall)WaitForSingleObject(releaseMessage,5000);
     if(msg==WM_WINDOWPOSCHANGING&&stallPosition)WaitForSingleObject(releaseMessage,5000);
     if(msg==WM_GETMINMAXINFO&&minimum){auto info=reinterpret_cast<MINMAXINFO*>(l);info->ptMinTrackSize={900,650};return 0;}
@@ -47,6 +54,69 @@ int fixture(const std::filesystem::path& signal){
 }
 }
 int wmain(int argc,wchar_t** argv){
+    if(argc==5&&(std::wstring(argv[1])==L"--emulator-probe"||std::wstring(argv[1])==L"--emulator-roundtrip"||std::wstring(argv[1])==L"--native-placement"||std::wstring(argv[1])==L"--native-sizing"||std::wstring(argv[1])==L"--native-drag")) {
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        HWND root=reinterpret_cast<HWND>(std::stoull(argv[2]));home::Store store;store.path=argv[3];auto state=store.load();
+        auto policy=home::resolveWindow(state,home::describeWindow(root));auto record=home::activePositionRecord(state,policy.recordKey);
+        std::ofstream log(argv[4]);if(!record)return 2;
+        int sidebar=home::embeddedSidebarInset(root);log<<"sidebar-before="<<sidebar<<'\n';
+        RECT before{},after{};GetWindowRect(root,&before);UINT oldDpi=GetDpiForWindow(root);
+        auto result=home::RestoreStatus::Failed;
+        if(std::wstring(argv[1])==L"--emulator-roundtrip") {
+            RECT smaller=before;smaller.right=smaller.left+MulDiv(before.right-before.left,85,100);smaller.bottom=smaller.top+MulDiv(before.bottom-before.top,85,100);
+            home::boundedNativeResize(root,smaller);Sleep(200);RECT changed{};GetWindowRect(root,&changed);log<<"smaller="<<changed.right-changed.left<<','<<changed.bottom-changed.top<<'\n';
+        }
+        if(std::wstring(argv[1])==L"--native-drag") {
+            SetForegroundWindow(root);Sleep(150);
+            POINT cursor{};GetCursorPos(&cursor);RECT bounds{};GetWindowRect(root,&bounds);
+            POINT start{bounds.right-4,(bounds.top+bounds.bottom)/2};
+            DWORD_PTR hit{};SendMessageTimeoutW(root,WM_NCHITTEST,0,MAKELPARAM(start.x,start.y),SMTO_ABORTIFHUNG,200,&hit);
+            log<<"drag-hit="<<hit<<" foreground="<<(GetForegroundWindow()==root)<<" reachable="<<(GetAncestor(WindowFromPoint(start),GA_ROOT)==root)<<'\n';log.flush();
+            if(GetForegroundWindow()==root&&GetAncestor(WindowFromPoint(start),GA_ROOT)==root) {
+                SetCursorPos(start.x,start.y);INPUT input{};input.type=INPUT_MOUSE;input.mi.dwFlags=MOUSEEVENTF_LEFTDOWN;SendInput(1,&input,sizeof(input));Sleep(120);
+                SetCursorPos(start.x+12,start.y);Sleep(200);input.mi.dwFlags=MOUSEEVENTF_LEFTUP;SendInput(1,&input,sizeof(input));Sleep(300);SetCursorPos(cursor.x,cursor.y);result=home::RestoreStatus::Limited;
+            }
+        } else if(std::wstring(argv[1])==L"--native-sizing") {
+            RECT desired=record->normal;DWORD_PTR reply{};
+            auto send=[&](UINT m,WPARAM w=0,LPARAM l=0){return SendMessageTimeoutW(root,m,w,l,SMTO_BLOCK|SMTO_ABORTIFHUNG,200,&reply)!=0;};
+            send(WM_ENTERSIZEMOVE);
+            home::boundedWindowPos(root,nullptr,desired.left,desired.top,desired.right-desired.left,desired.bottom-desired.top,SWP_NOZORDER|SWP_NOACTIVATE);
+            send(WM_SIZING,WMSZ_BOTTOMRIGHT,reinterpret_cast<LPARAM>(&desired));
+            log<<"adjusted="<<desired.left<<','<<desired.top<<','<<desired.right<<','<<desired.bottom<<'\n';
+            home::boundedWindowPos(root,nullptr,desired.left,desired.top,desired.right-desired.left,desired.bottom-desired.top,SWP_NOZORDER|SWP_NOACTIVATE);
+            send(WM_EXITSIZEMOVE);Sleep(500);result=home::RestoreStatus::Limited;
+        } else if(std::wstring(argv[1])==L"--native-placement") {
+            WINDOWPLACEMENT placement{sizeof(placement)};GetWindowPlacement(root,&placement);placement.rcNormalPosition=record->normal;placement.showCmd=SW_SHOWNOACTIVATE;
+            if(home::boundedWindowPlacement(root,placement))result=home::RestoreStatus::Restored;
+            Sleep(500);
+        } else {SetForegroundWindow(root);Sleep(100);result=home::restoreDetailed(root,*record);}
+        GetWindowRect(root,&after);log<<"restore="<<int(result)<<" foreground="<<(GetForegroundWindow()==root)<<" record="<<record->normal.top<<','<<record->normal.bottom<<'\n';
+        bool preserved=before.right-before.left==after.right-after.left&&before.bottom-before.top==after.bottom-after.top;
+        log<<"size-preserved="<<preserved<<" same-dpi="<<(oldDpi==GetDpiForWindow(root))<<'\n';
+        for(int pass=0;pass<7;++pass) {
+            if(pass)Sleep(300);
+            log<<"pass="<<pass<<" sidebar="<<home::embeddedSidebarInset(root)<<'\n';
+            EnumChildWindows(root,[](HWND child,LPARAM data)->BOOL{
+                auto& log=*reinterpret_cast<std::ofstream*>(data);wchar_t cls[128]{};GetClassNameW(child,cls,128);
+                RECT r{};GetWindowRect(child,&r);MapWindowPoints(nullptr,GetParent(child),reinterpret_cast<POINT*>(&r),2);
+                DWORD pid{};GetWindowThreadProcessId(child,&pid);
+                log<<reinterpret_cast<UINT_PTR>(child)<<" pid="<<pid<<" parent="<<reinterpret_cast<UINT_PTR>(GetParent(child))<<" root="<<reinterpret_cast<UINT_PTR>(GetAncestor(child,GA_ROOT))<<" visible="<<IsWindowVisible(child)<<" rect="<<r.left<<','<<r.top<<','<<r.right<<','<<r.bottom<<'\n';return TRUE;
+            },reinterpret_cast<LPARAM>(&log));log.flush();
+        }
+        RECT visible{};MONITORINFO monitor{sizeof(monitor)};
+        if(home::visibleWindowFrame(root,visible)&&GetMonitorInfoW(MonitorFromWindow(root,MONITOR_DEFAULTTONEAREST),&monitor))log<<"visible-bottom="<<visible.bottom<<" work-bottom="<<monitor.rcWork.bottom<<" gap="<<monitor.rcWork.bottom-visible.bottom<<'\n';
+        RECT content{};HWND shell=home::embeddedShell(root);
+        if(shell&&GetWindowRect(shell,&content)&&GetMonitorInfoW(MonitorFromWindow(root,MONITOR_DEFAULTTONEAREST),&monitor))log<<"content-bottom="<<content.bottom<<" work-bottom="<<monitor.rcWork.bottom<<" content-gap="<<monitor.rcWork.bottom-content.bottom<<'\n';
+        if(std::wstring(argv[1])==L"--emulator-probe"||std::wstring(argv[1])==L"--emulator-roundtrip") {
+            RECT focused{},inactive{};GetWindowRect(root,&focused);
+            HWND focusFixture=CreateWindowExW(WS_EX_TOOLWINDOW,L"STATIC",L"",WS_POPUP,0,0,1,1,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+            if(focusFixture){ShowWindow(focusFixture,SW_SHOWNOACTIVATE);SetForegroundWindow(focusFixture);Sleep(120);GetWindowRect(root,&inactive);
+                RECT inactiveContent{};GetWindowRect(home::embeddedShell(root),&inactiveContent);
+                log<<"inactive="<<(GetForegroundWindow()!=root)<<" position-stable="<<EqualRect(&focused,&inactive)<<" top="<<inactive.top<<" inactive-content-gap="<<monitor.rcWork.bottom-inactiveContent.bottom<<'\n';
+                SetForegroundWindow(root);DestroyWindow(focusFixture);}
+        }
+        return result==home::RestoreStatus::Failed?1:0;
+    }
     if(argc==3&&std::wstring(argv[1])==L"--fixture")return fixture(argv[2]);
     std::cout<<std::unitbuf;int failures{};auto check=[&](bool ok,const char* text){std::cout<<(ok?"PASS ":"FAIL ")<<text<<'\n';if(!ok)++failures;};
     auto displays=home::collectDisplays();if(displays.empty()){std::cout<<"FAIL no live displays\n";return 1;}
@@ -62,6 +132,49 @@ int wmain(int argc,wchar_t** argv){
     });
     HWND w=future.get();check(w!=nullptr,"responsive worker-thread native fixture creates without activating");
     if(!w){worker.join();CloseHandle(releaseMessage);return 1;}
+    check(home::boundedCommitResize(w)&&resizeStage==3,"embedded renderer resize sends begin, actual sizing rectangle, then end");
+    check(!home::boundedCommitResize(nullptr),"embedded renderer resize rejects invalid windows");
+    check(home::bottomEdgeCorrection({2555,0,3300,1374},{2558,0,3297,1365},{2560,0,5120,1368},144)==3,"recorded bottom contact compensates visible frame gap");
+    check(home::bottomEdgeCorrection({2555,0,3300,1374},{2560,1,3297,1366},{2560,0,5120,1368},144)==2,"content edge excludes the two-pixel emulator bottom border");
+    check(home::bottomEdgeCorrection({2555,0,3300,1350},{2558,0,3297,1347},{2560,0,5120,1368},144)==0,"intentional recorded bottom gap is preserved");
+    check(home::bottomEdgeCorrection({2555,0,3300,1374},{2558,0,3297,1370},{2560,0,5120,1368},144)==0,"bottom alignment does not move windows already reaching the taskbar");
+    check(home::bottomEdgeCorrection({2555,0,3300,1374},{2558,0,3297,1200},{2560,0,5120,1368},144)==0,"large application size restrictions do not become a large position jump");
+    {
+        RECT original{},actual{};GetWindowRect(w,&original);RECT requested=original;requested.right=requested.left+600;requested.bottom=requested.top+400;
+        constrainNativeResize=true;resizeStage=0;bool resized=home::boundedNativeResize(w,requested);constrainNativeResize=false;GetWindowRect(w,&actual);
+        check(resized&&resizeStage==3&&actual.right-actual.left==520&&actual.bottom-actual.top==360,"native restore applies application sizing constraints before ending resize");
+        home::boundedWindowPos(w,nullptr,original.left,original.top,original.right-original.left,original.bottom-original.top,SWP_NOZORDER|SWP_NOACTIVATE);
+    }
+    {
+        WNDCLASSW qt{};qt.hInstance=GetModuleHandleW(nullptr);qt.lpszClassName=L"QtRendererFixture";qt.lpfnWndProc=DefWindowProcW;RegisterClassW(&qt);
+        auto sub=qt;sub.lpszClassName=L"subWin";RegisterClassW(&sub);
+        HWND viewport=CreateWindowExW(0,qt.lpszClassName,L"",WS_CHILD|WS_VISIBLE,0,40,400,300,w,nullptr,qt.hInstance,nullptr);
+        HWND renderHost=CreateWindowExW(0,qt.lpszClassName,L"",WS_CHILD|WS_VISIBLE,30,60,500,400,viewport,nullptr,qt.hInstance,nullptr);
+        HWND renderer=CreateWindowExW(0,sub.lpszClassName,L"",WS_CHILD|WS_VISIBLE,20,50,600,450,renderHost,nullptr,qt.hInstance,nullptr);
+        RECT expected{},hostBounds{},renderBounds{},viewportBefore{},viewportAfter{};GetWindowRect(viewport,&viewportBefore);
+        bool synced=home::syncEmbeddedRenderer(w);GetWindowRect(viewport,&expected);GetWindowRect(renderHost,&hostBounds);GetWindowRect(renderer,&renderBounds);GetWindowRect(viewport,&viewportAfter);
+        check(viewport&&renderHost&&renderer&&synced&&EqualRect(&expected,&hostBounds)&&EqualRect(&expected,&renderBounds)&&EqualRect(&viewportBefore,&viewportAfter),"renderer and host fit viewport without moving caption or sidebar boundary");
+        check(home::syncEmbeddedRenderer(w),"aligned renderer synchronization is idempotent");
+        RECT rootClient{};GetClientRect(w,&rootClient);
+        SetWindowPos(viewport,nullptr,0,40,rootClient.right-46,300,SWP_NOZORDER|SWP_NOACTIVATE);
+        check(home::embeddedSidebarInset(w)==46,"expanded sidebar width is measured from shell boundary");
+        SetWindowPos(viewport,nullptr,0,40,rootClient.right,300,SWP_NOZORDER|SWP_NOACTIVATE);
+        check(home::embeddedSidebarInset(w)==0,"collapsed sidebar reserves no content width");
+        resizeStage=0;
+        bool layout=home::syncEmbeddedLayout(w,46);RECT fitted{};GetWindowRect(viewport,&fitted);MapWindowPoints(nullptr,w,reinterpret_cast<POINT*>(&fitted),2);
+        check(layout&&fitted.left==0&&fitted.top==0&&fitted.right==rootClient.right-46&&fitted.bottom==rootClient.bottom,"client shell fills bottom while preserving expanded sidebar width");
+        check(resizeStage==0,"layout synchronization sends no interactive sizing messages to outer wrapper");
+        check(home::embeddedLayoutReady(w,46),"read-only layout validation accepts aligned native layout");
+        SetWindowPos(renderHost,nullptr,20,30,200,160,SWP_NOZORDER|SWP_NOACTIVATE);
+        RECT unaligned{},observed{};GetWindowRect(renderHost,&unaligned);
+        bool ready=home::embeddedLayoutReady(w,46);GetWindowRect(renderHost,&observed);
+        check(!ready&&EqualRect(&unaligned,&observed),"stale renderer is reported without changing its geometry");
+        DestroyWindow(renderer);DestroyWindow(renderHost);DestroyWindow(viewport);
+    }
+    if(argc==2&&std::wstring(argv[1])==L"--layout-only") {
+        PostMessageW(w,WM_CLOSE,0,0);worker.join();CloseHandle(releaseMessage);
+        std::cout<<"Failures: "<<failures<<'\n';return failures?1:0;
+    }
     auto saved=home::capture(w);RECT before{},after{};GetWindowRect(w,&before);
     check(!saved.topology.empty()&&!saved.device.empty()&&saved.dpi>=48&&closeRect(saved.normal,before),"live capture includes exact ordinary bounds and topology");
     SetWindowPos(w,nullptr,work.left+240,work.top+200,800,500,SWP_NOACTIVATE|SWP_NOZORDER);

@@ -27,6 +27,19 @@ int main() {
         check(r&&r->right-r->left==spacing&&r->top==0&&r->bottom==image.height,"measured icon spacing supplies cell width and caption height");
     }
     Image dark(40,120,true); check(dark.detect().has_value(),"dark caption detection");
+    Image activeSidebar(40,120);auto activeOriginal=activeSidebar.pixels;
+    for(int y=0;y<activeSidebar.height;++y)for(int x=activeSidebar.width-40;x<activeSidebar.width;++x)
+        if(activeOriginal[size_t(y)*activeSidebar.width+x]==0x202020)activeSidebar.point(x,y,0x0088ff);
+    check(activeSidebar.detect().has_value(),"blue active sidebar toggle preserves control detection");
+    for(int extra : {40,60,80}) {
+        Image sidebar(40,120); auto expected=sidebar.detect();
+        int oldWidth=sidebar.width; auto original=sidebar.pixels;
+        sidebar.width+=extra; sidebar.pixels.assign(size_t(sidebar.width)*sidebar.height,0xf0f3f9);
+        for(int y=0;y<sidebar.height;++y)
+            std::copy_n(original.begin()+size_t(y)*oldWidth,oldWidth,sidebar.pixels.begin()+size_t(y)*sidebar.width);
+        auto actual=sidebar.detect();
+        check(expected&&actual&&EqualRect(&*expected,&*actual),"expanded sidebar preserves measured caption button position");
+    }
     Image hover(40,120,false,true); auto hovered=hover.detect(); check(hovered&&hovered->right-hovered->left==40,"hover background preserves measured width");
     Image blank(40,120); std::fill(blank.pixels.begin(),blank.pixels.end(),0xf0f3f9); check(!blank.detect(),"blank caption does not produce a measurement");
     Image covered(40,120); int c=covered.width-covered.spacing/2-3*covered.spacing;

@@ -20,7 +20,7 @@ Image load(const wchar_t* name) {
     if(converter)converter->Release();if(frame)frame->Release();if(decoder)decoder->Release();if(factory)factory->Release();
     if(FAILED(hr))throw std::runtime_error("Unable to read screenshot fixture");return image;
 }
-int main() {
+int wmain(int argc,wchar_t** argv) {
     CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);int failures{};
     struct Test {const wchar_t* file;const char* label;int controls,width,height,anchor;};
     for(auto test:{Test{L"chrome-caption.png","Chrome",3,57,50,234},Test{L"androws-caption.png","Androws",4,40,50,578},Test{L"codex-caption.png","Codex",3,57,46,246}}) {
@@ -40,6 +40,14 @@ int main() {
             bool match=style.valid&&closeChannel(GetRValue(style.background),GetRValue(expected))&&closeChannel(GetGValue(style.background),GetGValue(expected))&&closeChannel(GetBValue(style.background),GetBValue(expected))&&style.glyphWidth>=10&&style.glyphWidth<=14;
             std::cout<<(match?"PASS ":"FAIL ")<<test.label<<" native normal background and glyph RGB="<<int(GetRValue(style.background))<<","<<int(GetGValue(style.background))<<","<<int(GetBValue(style.background))<<" glyph="<<style.glyphWidth<<"\n";if(!match)++failures;
         }
+    }
+    for(int i=1;i<argc;++i) {
+        auto image=load(argv[i]);int height=std::min<int>(60,image.height);
+        auto r=home::detectAndrowsMinimize({image.pixels.data(),size_t(image.width)*height},image.width,height,144);
+        bool ok=r&&r->right-r->left>=40&&r->right-r->left<=60;
+        std::cout<<(ok?"PASS ":"FAIL ")<<"Androws supplied sidebar screenshot";
+        if(r)std::cout<<" minimize="<<r->left<<","<<r->right<<" hook="<<r->left-(r->right-r->left)<<","<<r->left;
+        std::cout<<'\n';if(!ok)++failures;
     }
     CoUninitialize();std::cout<<"Failures: "<<failures<<'\n';return failures?1:0;
 }

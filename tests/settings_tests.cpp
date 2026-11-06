@@ -18,12 +18,14 @@ int wmain(int argc,wchar_t** argv) {
     auto second=first;second.id=home::newId(L"r-");second.name=L"Second rule";second.className=L"OtherClass";app.rules.push_back(second);
     home::Store store{std::filesystem::path(argv[1])/L"settings-state.json"};check(store.save(state),"isolated settings state initializes");
     HWND settings{};auto window=home::createSettings(instance,&settings,state,store,nullptr,nullptr,false);
+    wchar_t windowTitle[256]{};GetWindowTextW(window,windowTitle,256);
+    check(std::wstring(windowTitle)==L"风钩 · YiboWindowHome 0.9.1","settings title shows Chinese and English names and version");
     auto tab=[&](int selection){TabCtrl_SetCurSel(GetDlgItem(window,204),selection);NMHDR notification{GetDlgItem(window,204),204,TCN_SELCHANGE};SendMessageW(window,WM_NOTIFY,204,reinterpret_cast<LPARAM>(&notification));};
     auto shown=[&](int id){return (GetWindowLongPtrW(GetDlgItem(window,id),GWL_STYLE)&WS_VISIBLE)!=0;};
     check(TabCtrl_GetItemCount(GetDlgItem(window,204))==3&&shown(275)&&!shown(274),"three peer tabs keep records separate from button calibration");
     tab(1);check(shown(274)&&shown(214)&&!shown(275)&&!shown(230),"button tab exposes calibration without record or rule controls");tab(0);
-    check(window&&settings==window&&ListView_GetItemCount(GetDlgItem(window,200))==2,"native settings navigation includes global default and application");
-    ListView_SetItemState(GetDlgItem(window,200),1,LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED);
+    check(window&&settings==window&&ListView_GetItemCount(GetDlgItem(window,200))==3,"native settings navigation includes global default, settings and application");
+    ListView_SetItemState(GetDlgItem(window,200),2,LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED);
     wchar_t value[256]{};GetDlgItemTextW(window,210,value,256);check(std::wstring(value)==L"Settings test","selecting application loads editable details");
     wchar_t emptyRecordName[256]{};ListView_GetItemText(GetDlgItem(window,275),0,1,emptyRecordName,256);check(!ListView_GetCheckState(GetDlgItem(window,275),0)&&std::wstring(emptyRecordName).find(L"启用中")==std::wstring::npos,"empty default slot is not presented as an active saved record");
     GetDlgItemTextW(window,218,value,256);check(std::wstring(value)==L"-9"&&!IsWindowEnabled(GetDlgItem(window,218)),"inherited maximum offset shows actual global value instead of stale custom 100");
@@ -66,7 +68,7 @@ int wmain(int argc,wchar_t** argv) {
     check(ListView_GetItemCount(GetDlgItem(window,275))==2,"record tab exposes default and concurrently added named position");
     RECT dpiBounds{};GetWindowRect(window,&dpiBounds);auto oldNav=GetDlgItem(window,200),oldPositions=GetDlgItem(window,275);int oldSelection=ListView_GetNextItem(oldPositions,-1,LVNI_SELECTED);wchar_t beforeName[256]{};GetDlgItemTextW(window,280,beforeName,256);auto dpi=GetDpiForWindow(window);
     SendMessageW(window,WM_DPICHANGED,MAKELONG(dpi,dpi),reinterpret_cast<LPARAM>(&dpiBounds));wchar_t afterName[256]{};GetDlgItemTextW(window,280,afterName,256);
-    check(GetDlgItem(window,200)!=oldNav&&GetDlgItem(window,275)!=oldPositions&&ListView_GetItemCount(GetDlgItem(window,200))==3&&ListView_GetItemCount(GetDlgItem(window,275))==2&&ListView_GetNextItem(GetDlgItem(window,275),-1,LVNI_SELECTED)==oldSelection&&std::wstring(beforeName)==afterName,"DPI relayout recreates measured lists while preserving rows, selection and edit text");
+    check(GetDlgItem(window,200)!=oldNav&&GetDlgItem(window,275)!=oldPositions&&ListView_GetItemCount(GetDlgItem(window,200))==4&&ListView_GetItemCount(GetDlgItem(window,275))==2&&ListView_GetNextItem(GetDlgItem(window,275),-1,LVNI_SELECTED)==oldSelection&&std::wstring(beforeName)==afterName,"DPI relayout recreates measured lists while preserving rows, selection and edit text");
     auto bounds=[&](int id){RECT r{};GetWindowRect(GetDlgItem(window,id),&r);MapWindowPoints(nullptr,window,reinterpret_cast<POINT*>(&r),2);return r;};
     RECT client{};GetClientRect(window,&client);auto recordList=bounds(275),sideAdd=bounds(206),activate=bounds(277),add=bounds(276);
     check(recordList.bottom<=client.bottom&&activate.bottom<=recordList.top&&activate.right<=add.left&&sideAdd.bottom<=client.bottom,"record actions stay above the list and sidebar actions fit the window");
@@ -80,14 +82,14 @@ int wmain(int argc,wchar_t** argv) {
     ListView_SetItemState(GetDlgItem(window,275),1,LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED);NMITEMACTIVATE dbl{};dbl.hdr.hwndFrom=GetDlgItem(window,275);dbl.hdr.idFrom=275;dbl.hdr.code=NM_DBLCLK;dbl.iItem=1;dbl.iSubItem=1;SendMessageW(window,WM_NOTIFY,275,reinterpret_cast<LPARAM>(&dbl));
     check(shown(280),"double-clicking a named record opens the inline name editor");SetDlgItemTextW(window,280,L"阅读布局");SendMessageW(window,WM_COMMAND,MAKEWPARAM(280,EN_KILLFOCUS),reinterpret_cast<LPARAM>(GetDlgItem(window,280)));check(!shown(280),"inline name editor closes after confirming the edit");SendMessageW(window,WM_COMMAND,MAKEWPARAM(203,BN_CLICKED),0);
     check(store.load().records.at(additional).name==L"阅读布局"&&state.records.size()==3,"record rename transaction retains geometry and other record scopes");
-    SetDlgItemTextW(window,270,L"Newly");check(ListView_GetItemCount(GetDlgItem(window,200))==2,"application search filters by name while retaining global defaults");
-    ListView_SetItemState(GetDlgItem(window,200),1,LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED);GetDlgItemTextW(window,210,value,256);
+    SetDlgItemTextW(window,270,L"Newly");check(ListView_GetItemCount(GetDlgItem(window,200))==3,"application search filters by name while retaining global defaults and settings");
+    ListView_SetItemState(GetDlgItem(window,200),2,LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED);GetDlgItemTextW(window,210,value,256);
     check(std::wstring(value)==L"Newly recorded","filtered navigation resolves application identity instead of using visible row index");
-    SetDlgItemTextW(window,270,L"");ListView_SetItemState(GetDlgItem(window,200),1,LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED);
+    SetDlgItemTextW(window,270,L"");ListView_SetItemState(GetDlgItem(window,200),2,LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED);
     std::wstring files=executable;files+=L'\0';files+=L'\0';size_t size=sizeof(DROPFILES)+files.size()*sizeof(wchar_t);
     HGLOBAL drop=GlobalAlloc(GHND,size);auto data=static_cast<DROPFILES*>(GlobalLock(drop));data->pFiles=sizeof(DROPFILES);data->fWide=TRUE;memcpy(reinterpret_cast<char*>(data)+sizeof(DROPFILES),files.data(),files.size()*sizeof(wchar_t));GlobalUnlock(drop);
     SendMessageW(window,WM_DROPFILES,reinterpret_cast<WPARAM>(drop),0);
-    check(ListView_GetItemCount(GetDlgItem(window,200))==3&&state.applications.size()==2,"native file-drop entry deduplicates an existing executable");
+    check(ListView_GetItemCount(GetDlgItem(window,200))==4&&state.applications.size()==2,"native file-drop entry deduplicates an existing executable");
     SendDlgItemMessageW(window,205,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(8,8));SendMessageW(window,WM_COMMAND,IDCANCEL,0);
     check(IsWindow(window)&&GetCapture()!=GetDlgItem(window,205)&&state.applications.size()==2,"dialog Escape cancels picker capture without closing settings or adding an application");
     // Duplicate addition is navigation only, so closing must not ask to save.

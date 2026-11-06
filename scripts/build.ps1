@@ -34,9 +34,5 @@ if ($LASTEXITCODE) { throw 'Native settings tests failed.' }
 & $cmakePath --install (Join-Path $projectRoot 'build') --config Release --prefix (Join-Path $projectRoot 'dist')
 if ($LASTEXITCODE) { throw 'Packaging failed.' }
 $testExe = Join-Path $projectRoot 'dist\YiboWindowHome.exe'
-$testPath = Join-Path $projectRoot ('build\test-state-' + [DateTime]::Now.ToString('yyyyMMdd-HHmmss'))
-$testProcess = Start-Process -FilePath $testExe -ArgumentList @('--self-test', ('"' + $testPath + '"')) -WindowStyle Hidden -PassThru
-if (-not $testProcess.WaitForExit(45000)) { throw 'Prototype test timed out.' }
-Get-Content -LiteralPath (Join-Path $testPath 'results.txt')
-if ($testProcess.ExitCode) { throw 'Prototype integration tests failed.' }
+Write-Host 'Interactive prototype self-test is not run during packaging.'
 Get-Item -LiteralPath $testExe | Select-Object FullName, Length

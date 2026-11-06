@@ -1,5 +1,6 @@
 #include "state.h"
 #include "window_ops.h"
+#include "emulator_layout.h"
 #include <shellscalingapi.h>
 #include <algorithm>
 #include <cwctype>
@@ -330,9 +331,26 @@ RestoreStatus restoreDetailed(HWND window,const Record& saved) {
     if(!SendMessageTimeoutW(window,WM_NULL,0,0,SMTO_ABORTIFHUNG|SMTO_BLOCK,WindowOperationTimeoutMs,&response))return RestoreStatus::Failed;
     auto displays=collectDisplays();auto plan=planRestore(saved,displays,before);if(!plan)return RestoreStatus::Failed;
     RECT target=plan->normal;auto& selected=displays[plan->displayIndex];
+    auto path=describeWindow(window).identity.path;
+    auto name=path.find_last_of(L"\\/");
+    bool emulator=_wcsicmp(path.c_str()+(name==std::wstring::npos?0:name+1),L"Androws.exe")==0;
+    if(emulator) {
+        if((IsZoomed(window)||IsIconic(window))&&!boundedShowWindow(window,SW_RESTORE))return RestoreStatus::Failed;
+        if(!boundedNativeResize(window,target))return RestoreStatus::Failed;
+        if(!saved.maximized&&!finishNativeVerticalFit(window,target,selected.work))return RestoreStatus::Failed;
+        RECT actual{};if(!GetWindowRect(window,&actual))return RestoreStatus::Failed;
+        bool exact=abs(actual.left-target.left)<=2&&abs(actual.top-target.top)<=2&&abs(actual.right-target.right)<=2&&abs(actual.bottom-target.bottom)<=2;
+        if(saved.maximized) {
+            if(!boundedShowWindow(window,SW_MAXIMIZE)||!GetWindowRect(window,&actual))return RestoreStatus::Failed;
+            if(!IsZoomed(window)||displayForRect(actual,displays)!=std::optional<size_t>(plan->displayIndex))return RestoreStatus::Limited;
+        } else if(!exact)return RestoreStatus::Limited;
+        return plan->environmentChanged||plan->fallback||plan->visibilityCorrected?RestoreStatus::Adapted:RestoreStatus::Restored;
+    }
     if((IsZoomed(window)||IsIconic(window))&&!boundedShowWindow(window,SW_RESTORE))return RestoreStatus::Failed;
     UINT oldDpi=GetDpiForWindow(window);
-    auto place=[&](RECT rect){return boundedWindowPos(window,nullptr,rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top,SWP_NOZORDER|SWP_NOACTIVATE);};
+    auto place=[&](RECT rect){
+        return boundedWindowPos(window,nullptr,rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top,SWP_NOZORDER|SWP_NOACTIVATE);
+    };
     if(!place(target))return RestoreStatus::Failed;
     RECT actual{};if(!GetWindowRect(window,&actual))return RestoreStatus::Failed;
     auto close=[](RECT a,RECT b){return abs(a.left-b.left)<=2&&abs(a.top-b.top)<=2&&abs(a.right-b.right)<=2&&abs(a.bottom-b.bottom)<=2;};

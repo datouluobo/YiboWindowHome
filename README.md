@@ -1,6 +1,6 @@
 # 风钩 · YiboWindowHome
 
-使用 C++20 + Win32 实现的 Windows 窗口位置工具。当前版本为 0.9.0。
+使用 C++20 + Win32 实现的 Windows 窗口位置工具。当前版本为 0.9.1。
 
 ## 运行
 

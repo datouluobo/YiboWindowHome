@@ -46,12 +46,18 @@ LONG captionBottom{};
 enum class VisibilityReason { Initial,Paused,Menu,InvalidTarget,NoIdentity,Occluded,PlacementFailed,Visible,NoCaptionMeasurement,RuleExcluded };
 VisibilityReason visibilityReason{};
 
+bool notificationsEnabled() {
+    HKEY key{};if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\YiboWindowHome",0,KEY_QUERY_VALUE,&key)!=ERROR_SUCCESS)return false;
+    DWORD enabled{},type{},size=sizeof(enabled);auto result=RegQueryValueExW(key,L"NotificationsEnabled",nullptr,&type,reinterpret_cast<BYTE*>(&enabled),&size);RegCloseKey(key);
+    return result==ERROR_SUCCESS&&type==REG_DWORD&&size==sizeof(enabled)&&enabled!=0;
+}
 void notify(const wchar_t* message,bool error=false) {
+    feedbackUntil=GetTickCount64()+1400;
+    SetWindowTextW(overlay,error?L"!":L"✓"); InvalidateRect(overlay,nullptr,TRUE); SetTimer(host,2,1400,nullptr);
+    if(!notificationsEnabled())return;
     NOTIFYICONDATAW data{sizeof(data)}; data.hWnd=host; data.uID=1; data.uFlags=NIF_INFO;
     wcscpy_s(data.szInfoTitle,L"风钩 · 技术原型"); wcsncpy_s(data.szInfo,message,_TRUNCATE); data.dwInfoFlags=error?NIIF_WARNING:NIIF_INFO;
     Shell_NotifyIconW(NIM_MODIFY,&data);
-    feedbackUntil=GetTickCount64()+1400;
-    SetWindowTextW(overlay,error?L"!":L"✓"); InvalidateRect(overlay,nullptr,TRUE); SetTimer(host,2,1400,nullptr);
 }
 void trayIcon() {
     NOTIFYICONDATAW data{sizeof(data)}; data.hWnd=host; data.uID=1; data.uFlags=NIF_MESSAGE|NIF_ICON|NIF_TIP;
@@ -143,8 +149,8 @@ void refresh(bool fast=false) {
 }
 bool operate(HWND window,DWORD pid,UINT button,const std::wstring& expectedScope,bool createNew=false) {
     if(paused||home::settingsPreviewState())return false;
-    if(!validTarget(window,pid)||window!=GetForegroundWindow()) return false;
-    auto key=home::appKey(window); if(key.empty()||key!=targetKey) return false;
+    if(!validTarget(window,pid)||window!=GetForegroundWindow())return false;
+    auto key=home::appKey(window); if(key.empty()||key!=targetKey)return false;
     auto description=home::describeWindow(window);auto policy=home::resolveWindow(state,description);
     if(!policy.allowed||policy.recordKey!=expectedScope){requestRefresh();return false;}
     if(button==WM_RBUTTONDOWN) {

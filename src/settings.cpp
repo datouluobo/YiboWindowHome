@@ -27,7 +27,7 @@ enum Id {Nav=200,GlobalX=201,GlobalY=202,Save=203,Tabs=204,Pick=205,Browse=206,
     RuleList=230,AddRule=231,RemoveRule=232,UpRule=233,DownRule=234,RuleName=235,Class=236,TitleMode=237,Title=238,Action=239,Active=240,
     RuleNormal=241,RuleX=242,RuleY=243,RuleMax=244,RuleMaxX=245,RuleMaxY=246,
     RemoveApp=250,Inherit=251,Preview=252,ClearApp=253,ClearRule=254,PreviewMax=255,Heading=260,Summary=261,RuleSummary=262,Status=263,Identity=264,
-    SearchApps=270,MoreApp=271,AppIcon=272,DesktopCanvas=273,CaptionCanvas=274,Positions=275,AddPosition=276,ActivatePosition=277,RenamePosition=278,DeletePosition=279,PositionName=280,PositionScope=281,PreviewDesktop=282,CaptionMode=283,RenameApp=284,
+    SearchApps=270,MoreApp=271,AppIcon=272,DesktopCanvas=273,CaptionCanvas=274,Positions=275,AddPosition=276,ActivatePosition=277,RenamePosition=278,DeletePosition=279,PositionName=280,PositionScope=281,PreviewDesktop=282,CaptionMode=283,RenameApp=284,Startup=285,Notifications=286,
     SidebarTitle=300,HelpTitle=301,HelpBody=302,DropHint=303,PageTitle=304,PageHelp=305,RecordsTitle=306,RecordsHelp=307,GlobalHelp=308,GlobalXLabel=309,GlobalYLabel=310,RuleHelp=311,RuleNameLabel=312,ClassLabel=313,ScopeLabel=314,CaptionModeLabel=315,PreviewNote=316};
 struct Widget {HWND window{};int group{},x{},y{},width{},height{},fontStyle{};bool muted{};};
 struct Context {
@@ -89,7 +89,33 @@ HICON applicationIcon(const Application& app) {
 std::wstring text(Context& c,int id) {auto window=item(c,id);int count=GetWindowTextLengthW(window);std::wstring result(size_t(count)+1,L'\0');GetWindowTextW(window,result.data(),count+1);result.resize(count);return result;}
 void set(Context& c,int id,const std::wstring& value) {SetWindowTextW(item(c,id),value.c_str());}
 bool checked(Context& c,int id) {return SendMessageW(item(c,id),BM_GETCHECK,0,0)==BST_CHECKED;}
-void check(Context& c,int id,bool value) {SendMessageW(item(c,id),BM_SETCHECK,value?BST_CHECKED:BST_UNCHECKED,0);}
+void check(Context& c,int id,bool value) {SendMessageW(item(c,id),BM_SETCHECK,value?BST_CHECKED:BST_UNCHECKED,0);if(id==Startup||id==Notifications)InvalidateRect(item(c,id),nullptr,TRUE);}
+bool startupEnabled() {
+    HKEY key{};if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",0,KEY_QUERY_VALUE,&key)!=ERROR_SUCCESS)return false;
+    DWORD type{},size{};auto result=RegQueryValueExW(key,L"YiboWindowHome",nullptr,&type,nullptr,&size);RegCloseKey(key);
+    return result==ERROR_SUCCESS&&(type==REG_SZ||type==REG_EXPAND_SZ);
+}
+bool setStartup(bool enabled) {
+    HKEY key{};DWORD disposition{};auto result=RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",0,nullptr,0,KEY_SET_VALUE,nullptr,&key,&disposition);
+    if(result!=ERROR_SUCCESS)return false;
+    if(enabled) {
+        std::wstring command=L"\"";std::vector<wchar_t> path(32768);DWORD length=GetModuleFileNameW(nullptr,path.data(),DWORD(path.size()));
+        if(!length||length>=path.size()){RegCloseKey(key);return false;}
+        command.append(path.data(),length);command+=L"\"";
+        result=RegSetValueExW(key,L"YiboWindowHome",0,REG_SZ,reinterpret_cast<const BYTE*>(command.c_str()),DWORD((command.size()+1)*sizeof(wchar_t)));
+    } else result=RegDeleteValueW(key,L"YiboWindowHome");
+    RegCloseKey(key);return result==ERROR_SUCCESS||( !enabled&&result==ERROR_FILE_NOT_FOUND );
+}
+bool notificationsEnabled() {
+    HKEY key{};if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\YiboWindowHome",0,KEY_QUERY_VALUE,&key)!=ERROR_SUCCESS)return false;
+    DWORD enabled{},type{},size=sizeof(enabled);auto result=RegQueryValueExW(key,L"NotificationsEnabled",nullptr,&type,reinterpret_cast<BYTE*>(&enabled),&size);RegCloseKey(key);
+    return result==ERROR_SUCCESS&&type==REG_DWORD&&size==sizeof(enabled)&&enabled!=0;
+}
+bool setNotifications(bool enabled) {
+    HKEY key{};DWORD disposition{};auto result=RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\YiboWindowHome",0,nullptr,0,KEY_SET_VALUE,nullptr,&key,&disposition);
+    if(result!=ERROR_SUCCESS)return false;DWORD value=enabled?1:0;
+    result=RegSetValueExW(key,L"NotificationsEnabled",0,REG_DWORD,reinterpret_cast<const BYTE*>(&value),sizeof(value));RegCloseKey(key);return result==ERROR_SUCCESS;
+}
 void status(Context& c,const std::wstring& message) {
     std::wstring hint;
     if(c.selected>=0&&size_t(c.selected)<c.draft.applications.size()&&IsWindow(c.sample)) {
@@ -146,7 +172,7 @@ void layout(Context& c) {
     c.scrollX=GetScrollPos(c.window,SB_HORZ);c.scrollY=GetScrollPos(c.window,SB_VERT);
     int width=std::max(1040,visibleWidth),height=std::max(760,visibleHeight),x=292,right=width-28,span=right-x;
     auto place=[&](int id,int px,int py,int pw,int ph){for(auto& widget:c.widgets)if(GetDlgCtrlID(widget.window)==id){widget.x=px;widget.y=py;widget.width=pw;widget.height=ph;break;}};
-    place(SidebarTitle,24,24,216,28);place(SearchApps,20,67,224,34);place(Nav,12,119,244,height-398);
+    place(SidebarTitle,24,24,216,28);place(SearchApps,20,67,224,34);place(Nav,12,119,244,height-(c.selected==-2?179:398));
     place(HelpTitle,30,height-268,210,26);place(HelpBody,30,height-237,210,151);
     place(Pick,20,height-48,108,38);place(Browse,136,height-48,108,38);
     auto dc=GetDC(c.window);auto previousFont=SelectObject(dc,c.headingFont);SIZE titleSize{};auto heading=c.selected>=0&&size_t(c.selected)<c.draft.applications.size()?c.draft.applications[size_t(c.selected)].name:std::wstring(L"全局默认");GetTextExtentPoint32W(dc,heading.c_str(),int(heading.size()),&titleSize);SelectObject(dc,previousFont);ReleaseDC(c.window,dc);
@@ -174,6 +200,7 @@ void layout(Context& c) {
     appOffsets(AppNormal,x);appOffsets(AppMax,x+col+32);
     place(GlobalXLabel,x,settingsY+52,100,28);place(GlobalX,x+110,settingsY+48,144,34);place(GlobalYLabel,x+col+32,settingsY+52,100,28);place(GlobalY,x+col+142,settingsY+48,144,34);
     place(GlobalHelp,x,settingsY+112,span,148);
+    place(Startup,x,220,280,40);place(Notifications,x,286,280,40);
     int listHeight=std::clamp(height-650,100,220),detailY=248+listHeight+18;
     place(RuleHelp,x,170,span-318,44);place(AddRule,x,218,86,30);place(UpRule,x+96,218,76,30);place(DownRule,x+182,218,76,30);place(RemoveRule,right-106,218,106,30);
     place(RuleList,x,260,span,listHeight);detailY=278+listHeight;
@@ -190,17 +217,18 @@ void layout(Context& c) {
     // Existing IDs remain available to integrations; their replacements are
     // the record editor and the app overflow menu.
     for(auto& widget:c.widgets) {
-        int id=GetDlgCtrlID(widget.window);bool visible=widget.group==0||(c.selected>=0&&(widget.group==4||widget.group==c.tab+1||widget.group==6&&(c.tab==1||c.tab==2)))||(c.selected<0&&widget.group==5);
+        int id=GetDlgCtrlID(widget.window);bool visible=widget.group==0||(c.selected>=0&&(widget.group==4||widget.group==c.tab+1||widget.group==6&&(c.tab==1||c.tab==2)))||(c.selected==-1&&widget.group==5)||(c.selected==-2&&widget.group==7);
+        if(c.selected==-2&&(id==Enabled||id==Save||id==MoreApp||id==Tabs||id==Path||id==HelpTitle||id==HelpBody))visible=false;
         if(id==Name)visible=c.selected>=0&&c.renaming;
         if(id==Heading&&c.renaming)visible=false;
-        if(id==PageTitle)visible=c.tab!=2;
-        if(id==PageHelp)visible=c.tab==1||c.selected<0;
+        if(id==PageTitle)visible=c.selected!=-2&&c.tab!=2;
+        if(id==PageHelp)visible=c.selected!=-2&&(c.tab==1||c.selected<0);
         if(id==RecordsHelp)visible=false;
         if(id==DropHint||id==Status||id==RenamePosition)visible=false;
         if(id==PositionName)visible=c.positionEditing&&c.tab==0;
-        if(id==CaptionCanvas)visible=c.tab==1||c.selected<0;
-        if(id==CaptionMode)visible=c.tab==1||c.selected<0;
-        if(id==CaptionModeLabel)visible=c.tab==1||c.selected<0;
+        if(id==CaptionCanvas)visible=c.selected!=-2&&(c.tab==1||c.selected<0);
+        if(id==CaptionMode)visible=c.selected!=-2&&(c.tab==1||c.selected<0);
+        if(id==CaptionModeLabel)visible=c.selected!=-2&&(c.tab==1||c.selected<0);
         if(id==PositionScope)visible=c.selected>=0&&c.tab==0;
         if(id==PreviewMax||id==Inherit)visible=c.selected>=0&&c.tab==2;
         SetWindowPos(widget.window,nullptr,MulDiv(widget.x-c.scrollX,dpi,96),MulDiv(widget.y-c.scrollY,dpi,96),MulDiv(widget.width,dpi,96),MulDiv(widget.height,dpi,96),SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOCOPYBITS|(visible?SWP_SHOWWINDOW:SWP_HIDEWINDOW));
@@ -239,7 +267,7 @@ bool readOffset(Context& c,int base,Offset& offset) {offset.custom=checked(c,bas
 Application* selected(Context& c) {return c.selected>=0&&size_t(c.selected)<c.draft.applications.size()?&c.draft.applications[size_t(c.selected)]:nullptr;}
 WindowRule* selectedRule(Context& c) {auto app=selected(c);return app&&c.rule>=0&&size_t(c.rule)<app->rules.size()?&app->rules[size_t(c.rule)]:nullptr;}
 bool flush(Context& c,bool explain=true) {
-    if(c.loading)return true;
+    if(c.loading||c.selected==-2)return true;
     bool valid=true;
     if(auto app=selected(c)) {
         {
@@ -297,7 +325,9 @@ void loadSelection(Context& c) {
     c.loading=true;
     HICON nextIcon{};if(auto app=selected(c))nextIcon=applicationIcon(*app);
     if(!nextIcon)nextIcon=CopyIcon(LoadIconW(nullptr,IDI_APPLICATION));SendMessageW(item(c,AppIcon),STM_SETICON,reinterpret_cast<WPARAM>(nextIcon),0);if(c.headerIcon)DestroyIcon(c.headerIcon);c.headerIcon=nextIcon;
-    if(auto app=selected(c)) {
+    if(c.selected==-2) {
+        set(c,Heading,L"设置");set(c,Path,L"管理风钩的启动方式和操作通知。");check(c,Startup,startupEnabled());check(c,Notifications,notificationsEnabled());c.tab=0;
+    } else if(auto app=selected(c)) {
         set(c,Heading,app->name);set(c,Name,app->name);check(c,Enabled,app->enabled);
         set(c,Path,app->path);set(c,Identity,L"应用 ID："+app->id+(app->aumid.empty()?L"":L" · AUMID: "+app->aumid));
         loadOffset(c,AppNormal,app->normal);loadOffset(c,AppMax,app->maximized);
@@ -323,6 +353,7 @@ void navigation(Context& c,bool reload=true) {
     auto fallback=LoadIconW(nullptr,IDI_APPLICATION);ImageList_AddIcon(c.icons,fallback);
     auto add=[&](int index,const std::wstring& name,int image,const std::wstring& state){LVITEMW row{};row.mask=LVIF_TEXT|LVIF_IMAGE;row.iItem=index;row.pszText=const_cast<LPWSTR>(name.c_str());row.iImage=image;ListView_InsertItem(item(c,Nav),&row);ListView_SetItemText(item(c,Nav),index,1,const_cast<LPWSTR>(state.c_str()));};
     add(0,L"全局默认",0,L"");c.navIndices.push_back(-1);
+    add(1,L"设置",0,L"");c.navIndices.push_back(-2);
     for(size_t i=0;i<c.draft.applications.size();++i) {
         auto& app=c.draft.applications[i];int icon=0;
         auto searchable=app.name+L" "+app.path;std::transform(searchable.begin(),searchable.end(),searchable.begin(),[](wchar_t ch){return wchar_t(towlower(ch));});if(!query.empty()&&searchable.find(query)==searchable.npos)continue;
@@ -376,6 +407,7 @@ void syncExternal(Context& c) {
     if(changed&&GetFocus()!=item(c,PositionName)&&!c.renaming&&!c.pendingPositionName){navigation(c,false);refreshPositions(c);}
 }
 bool commit(Context& c) {
+    if(c.selected==-2)return true;
     if(!flush(c))return false;
     auto next=c.draft;
     for(auto& live:c.live->applications) {
@@ -515,7 +547,7 @@ void build(Context& c) {
     initializeVisuals(c);fonts(c);c.displays=collectDisplays();
     auto info=[&](int id,const wchar_t* value,int group,int fontStyle=0,bool muted=false,int height=26){widget(c,L"STATIC",value,0,0,0,100,height,id,group);c.widgets.back().fontStyle=fontStyle;c.widgets.back().muted=muted;};
     auto action=[&](int id,const wchar_t* value,int group){button(c,value,id,0,0,100,group);};
-    info(SidebarTitle,L"应用列表",0,2);edit(c,SearchApps,0,0,220,0,0,34);SendMessageW(item(c,SearchApps),EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(L"搜索应用名称或路径…"));
+    info(SidebarTitle,L"应用与设置",0,2);edit(c,SearchApps,0,0,220,0,0,34);SendMessageW(item(c,SearchApps),EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(L"搜索应用名称或路径…"));
     auto nav=widget(c,WC_LISTVIEWW,L"应用列表",WS_TABSTOP|LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS|LVS_NOCOLUMNHEADER|LVS_OWNERDRAWFIXED|LVS_SHAREIMAGELISTS,0,0,220,400,Nav,0);
     ListView_SetExtendedListViewStyle(nav,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_LABELTIP);ListView_SetBkColor(nav,uiSide(c));ListView_SetTextBkColor(nav,CLR_NONE);
     LVCOLUMNW column{};column.mask=LVCF_TEXT|LVCF_WIDTH;column.cx=200;column.pszText=const_cast<LPWSTR>(L"应用");ListView_InsertColumn(nav,0,&column);column.cx=0;column.pszText=const_cast<LPWSTR>(L"状态");ListView_InsertColumn(nav,1,&column);
@@ -547,6 +579,8 @@ void build(Context& c) {
     action(AppNormal+7000,L"恢复继承",2);action(AppMax+7000,L"恢复继承",2);
     info(GlobalXLabel,L"水平 X（DIP）",5);edit(c,GlobalX,0,0,140,5,0,34);info(GlobalYLabel,L"垂直 Y（DIP）",5);edit(c,GlobalY,0,0,140,5,0,34);
     info(GlobalHelp,L"未单独配置的应用继承全局按钮偏移。\r\n\r\n水平 X：-500 至 0，负数向左，0 与最小化按钮贴合。\r\n垂直 Y：-500 至 500，负数向上、正数向下。\r\n\r\n首次右键记录会自动建立应用条目。",5,0,true,148);
+    widget(c,L"BUTTON",L"开机自启",WS_TABSTOP|BS_AUTOCHECKBOX,0,0,280,40,Startup,7);
+    widget(c,L"BUTTON",L"操作通知",WS_TABSTOP|BS_AUTOCHECKBOX,0,0,280,40,Notifications,7);
     info(RuleHelp,L"按窗口类型区分记录或排除对话框。日常使用可不配置；列表越靠前优先级越高。",3,3,true,44);
     auto rules=widget(c,WC_LISTVIEWW,L"窗口规则",WS_TABSTOP|LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS|LVS_SHAREIMAGELISTS,0,0,800,120,RuleList,3);ListView_SetExtendedListViewStyle(rules,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_LABELTIP);
     for(auto entry:{std::pair{L"规则名称",180},std::pair{L"匹配条件",360},std::pair{L"行为",140}}){column.pszText=const_cast<LPWSTR>(entry.first);column.cx=MulDiv(entry.second,GetDpiForWindow(c.window),96);ListView_InsertColumn(rules,Header_GetItemCount(ListView_GetHeader(rules)),&column);}
@@ -563,6 +597,8 @@ void build(Context& c) {
 }
 void command(Context& c,int id,int notification) {
     if(c.loading)return;
+    if(id==Startup&&notification==BN_CLICKED){bool enabled=checked(c,Startup);if(!setStartup(enabled)){check(c,Startup,!enabled);error(c,L"开机自启设置失败，请检查当前用户的启动项注册表权限。");}return;}
+    if(id==Notifications&&notification==BN_CLICKED){bool enabled=checked(c,Notifications);if(!setNotifications(enabled)){check(c,Notifications,!enabled);error(c,L"通知设置保存失败，请检查当前用户注册表权限。");}return;}
     if(id==SearchApps&&notification==EN_CHANGE){navigation(c,false);return;}
     if(id==CaptionMode&&notification==CBN_SELCHANGE){c.previewMaximized=SendMessageW(item(c,CaptionMode),CB_GETCURSEL,0,0)==1;InvalidateRect(item(c,CaptionCanvas),nullptr,TRUE);return;}
     if(id==PositionScope&&notification==CBN_SELCHANGE){if(!flush(c)){SendMessageW(item(c,PositionScope),CB_SETCURSEL,c.recordScope,0);return;}c.recordScope=int(SendMessageW(item(c,PositionScope),CB_GETCURSEL,0,0));c.positionKey.clear();refreshPositions(c,false);return;}
@@ -643,7 +679,7 @@ void remeasureList(Context& c,int id) {
 }
 const State* settingsPreviewState() {return current&&current->preview?&current->draft:nullptr;}
 LRESULT CALLBACK settingsProc(HWND window,UINT message,WPARAM w,LPARAM l) {
-    if(message==WM_NCCREATE){auto creation=static_cast<Creation*>(reinterpret_cast<CREATESTRUCTW*>(l)->lpCreateParams);if(!creation||!creation->context)return FALSE;auto c=creation->context;creation->adopted=true;c->window=window;SetWindowLongPtrW(window,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(c));return TRUE;}
+    if(message==WM_NCCREATE){auto creation=static_cast<Creation*>(reinterpret_cast<CREATESTRUCTW*>(l)->lpCreateParams);if(!creation||!creation->context)return FALSE;auto c=creation->context;creation->adopted=true;c->window=window;SetWindowLongPtrW(window,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(c));return DefWindowProcW(window,message,w,l);}
     auto pointer=reinterpret_cast<Context*>(GetWindowLongPtrW(window,GWLP_USERDATA));if(!pointer)return DefWindowProcW(window,message,w,l);auto& c=*pointer;
     try {
         switch(message) {
@@ -722,7 +758,7 @@ HWND createSettings(HINSTANCE instance,HWND* slot,State& state,Store& store,void
     MONITORINFO monitor{sizeof(monitor)};GetMonitorInfoW(MonitorFromWindow(sample,MONITOR_DEFAULTTOPRIMARY),&monitor);
     int width=std::min(rect.right-rect.left,monitor.rcWork.right-monitor.rcWork.left),height=std::min(rect.bottom-rect.top,monitor.rcWork.bottom-monitor.rcWork.top);
     Creation creation{c};
-    auto window=CreateWindowExW(0,L"YiboHome.Settings",L"风钩 · YiboWindowHome 0.9.0",style,monitor.rcWork.left+(monitor.rcWork.right-monitor.rcWork.left-width)/2,monitor.rcWork.top+(monitor.rcWork.bottom-monitor.rcWork.top-height)/2,width,height,nullptr,nullptr,instance,&creation);
+    auto window=CreateWindowExW(0,L"YiboHome.Settings",L"风钩 · YiboWindowHome 0.9.1",style,monitor.rcWork.left+(monitor.rcWork.right-monitor.rcWork.left-width)/2,monitor.rcWork.top+(monitor.rcWork.bottom-monitor.rcWork.top-height)/2,width,height,nullptr,nullptr,instance,&creation);
     if(creation.adopted)owner.release();
     if(slot)*slot=window;
     if(visible&&window){ShowWindow(window,SW_SHOW);if(!IsWindowVisible(window))ShowWindow(window,SW_SHOW);SetForegroundWindow(window);}return window;

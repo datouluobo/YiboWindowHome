@@ -52,8 +52,7 @@ void paintSettings(Context& c,HDC dc){
         uiText(dc,L"水平 X：-500 至 0，负数向左；垂直 Y：-500 至 500，负上正下。",r(292,height-51,width-460,20),c.smallFont,uiMuted(c));
     }
     int height=std::max(760,MulDiv(client.bottom,96,dpi));
-    RECT help{MulDiv(20-c.scrollX,dpi,96),MulDiv(height-282-c.scrollY,dpi,96),MulDiv(244-c.scrollX,dpi,96),MulDiv(height-84-c.scrollY,dpi,96)};
-    uiRound(dc,help,uiWhite(c),uiLine(c),MulDiv(8,dpi,96));
+    if(c.selected!=-2){RECT help{MulDiv(20-c.scrollX,dpi,96),MulDiv(height-282-c.scrollY,dpi,96),MulDiv(244-c.scrollX,dpi,96),MulDiv(height-84-c.scrollY,dpi,96)};uiRound(dc,help,uiWhite(c),uiLine(c),MulDiv(8,dpi,96));}
 }
 void paintDesktop(Context& c,HDC dc,RECT area){
     int dpi=int(GetDpiForWindow(c.window));auto s=[&](int v){return MulDiv(v,dpi,96);};
@@ -109,7 +108,7 @@ void drawControl(Context& c,DRAWITEMSTRUCT& draw){
         uiFill(dc,r,uiSide(c));RECT inside=r;InflateRect(&inside,-s(4),-s(3));if(selectedRow){uiRound(dc,inside,uiTint(c),c.highContrast?uiBlue(c):RGB(202,220,247),s(8));RECT accent{inside.left+s(1),(inside.top+inside.bottom)/2-s(15),inside.left+s(5),(inside.top+inside.bottom)/2+s(15)};uiRound(dc,accent,uiBlue(c),uiBlue(c),s(2));}
         LVITEMW info{};info.mask=LVIF_IMAGE;info.iItem=int(draw.itemID);ListView_GetItem(item(c,Nav),&info);
         if(index<0){RECT icon{r.left+s(12),r.top+s(7),r.left+s(46),r.top+s(41)};uiSymbol(c,dc,L'\xE713',icon,uiInk(c));}else if(c.icons)ImageList_DrawEx(c.icons,info.iImage,dc,r.left+s(14),r.top+s(8),s(32),s(32),CLR_NONE,CLR_NONE,ILD_TRANSPARENT);
-        std::wstring name=index<0?L"全局默认":c.draft.applications[size_t(index)].name;
+        std::wstring name=index==-1?L"全局默认":index==-2?L"设置":c.draft.applications[size_t(index)].name;
         if(index>=0&&!c.draft.applications[size_t(index)].enabled)name+=L" · 已禁用";
         auto first=r;first.left+=s(58);first.right-=s(8);auto nameFont=c.font;if(selectedRow){SIZE extent{};auto old=SelectObject(dc,c.strongFont);GetTextExtentPoint32W(dc,name.c_str(),int(name.size()),&extent);SelectObject(dc,old);if(extent.cx<=first.right-first.left)nameFont=c.strongFont;}uiText(dc,name,first,nameFont,c.highContrast&&selectedRow?GetSysColor(COLOR_HIGHLIGHTTEXT):uiInk(c));
         if((draw.itemState&ODS_FOCUS)&&GetFocus()==draw.hwndItem&&!(SendMessageW(draw.hwndItem,WM_QUERYUISTATE,0,0)&UISF_HIDEFOCUS)){InflateRect(&inside,-s(3),-s(3));DrawFocusRect(dc,&inside);}return;
@@ -158,11 +157,11 @@ LRESULT CALLBACK visualControlProc(HWND window,UINT message,WPARAM w,LPARAM l,UI
         else if(tabs){for(int i=0;i<TabCtrl_GetItemCount(window);++i){RECT tab{};TabCtrl_GetItemRect(window,i,&tab);bool selectedTab=i==TabCtrl_GetCurSel(window);wchar_t caption[80]{};TCITEMW entry{};entry.mask=TCIF_TEXT;entry.pszText=caption;entry.cchTextMax=80;TabCtrl_GetItem(window,i,&entry);uiText(buffer,caption,tab,selectedTab?c.strongFont:c.font,selectedTab?uiBlue(c):uiMuted(c),DT_CENTER|DT_VCENTER|DT_SINGLELINE);if(selectedTab){RECT mark{tab.left,area.bottom-s(3),tab.right,area.bottom};uiFill(buffer,mark,uiBlue(c));}if(GetFocus()==window&&selectedTab){InflateRect(&tab,-s(5),-s(5));DrawFocusRect(buffer,&tab);}}RECT line{0,area.bottom-1,area.right,area.bottom};uiFill(buffer,line,uiLine(c));}
         else{
             bool enabled=IsWindowEnabled(window)!=FALSE,checked=SendMessageW(window,BM_GETCHECK,0,0)==BST_CHECKED;RECT icon{s(2),(area.bottom-s(18))/2,s(20),(area.bottom+s(18))/2};
-            if(id==Enabled){RECT track{s(2),(area.bottom-s(21))/2,s(42),(area.bottom+s(21))/2};uiRound(buffer,track,checked?uiBlue(c):uiLine(c),checked?uiBlue(c):uiLine(c),s(21));int diameter=s(15),left=checked?track.right-diameter-s(3):track.left+s(3);RECT thumb{left,track.top+s(3),left+diameter,track.top+s(3)+diameter};uiRound(buffer,thumb,uiWhite(c),uiWhite(c),diameter);icon.right=s(48);}
+            if(id==Enabled||id==Startup||id==Notifications){int width=s(id==Enabled?40:50),height=s(id==Enabled?21:26);RECT track{s(2),(area.bottom-height)/2,s(2)+width,(area.bottom+height)/2};COLORREF idle=id==Enabled?uiLine(c):c.highContrast?uiWhite(c):RGB(190,198,208);COLORREF edge=!checked?c.highContrast&&id!=Enabled?uiMuted(c):idle:uiBlue(c);uiRound(buffer,track,checked?uiBlue(c):idle,checked?uiBlue(c):edge,height/2);int diameter=s(id==Enabled?15:20),left=checked?track.right-diameter-s(3):track.left+s(3);RECT thumb{left,track.top+(height-diameter)/2,left+diameter,track.top+(height+diameter)/2};uiRound(buffer,thumb,uiWhite(c),uiWhite(c),diameter);icon.right=s(id==Enabled?48:58);}
             else if(id==Active)DrawFrameControl(buffer,&icon,DFC_BUTTON,DFCS_BUTTONCHECK|(checked?DFCS_CHECKED:0)|(!enabled?DFCS_INACTIVE:0));
             else uiRadio(c,buffer,icon,checked,enabled);
             RECT label=area;label.left=icon.right+s(4);auto caption=text(c,id);if(id==Enabled)caption=L"";if(id==AppNormal||id==AppMax)caption=L"自定义";
-            uiText(buffer,caption,label,c.font,enabled?uiInk(c):uiMuted(c));if(GetFocus()==window){InflateRect(&label,-2,-2);DrawFocusRect(buffer,&label);}
+            uiText(buffer,caption,label,c.font,enabled?uiInk(c):uiMuted(c));if(GetFocus()==window&&id!=Startup&&id!=Notifications){InflateRect(&label,-2,-2);DrawFocusRect(buffer,&label);}
         }
         BitBlt(dc,0,0,area.right,area.bottom,buffer,0,0,SRCCOPY);SelectObject(buffer,old);DeleteObject(bitmap);DeleteDC(buffer);if(message==WM_PAINT)EndPaint(window,&paint);return 0;
     }

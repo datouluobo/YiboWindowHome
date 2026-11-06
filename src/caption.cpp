@@ -52,8 +52,10 @@ CaptionMeasurement measureCaption(HWND window) {
         m.requiresVisualWidth=true;m.hasMinimize=false;m.hasCaptionGroup=false;
         auto measured=measureChromiumMinimize(window,m.visible,m.dpi);
         if(measured){m.visualMinimize=*measured;m.hasVisualMinimize=true;m.hasMeasuredControlRow=true;}
-    } else if(!m.hasMinimize && !m.hasCaptionGroup && isAndrowsWindow(window)) {
-        m.requiresVisualWidth=true;
+    } else if(isAndrowsWindow(window)) {
+        // Qt's native caption metadata describes the outer frame, while its
+        // actual controls move independently when the emulator toolbar opens.
+        m.requiresVisualWidth=true;m.hasMinimize=false;m.hasCaptionGroup=false;
         if(m.hasViewport) {
             auto measured=measureAndrowsMinimize(window,layoutCaption(m).title,m.dpi);
             if(measured) { m.visualMinimize=*measured; m.hasVisualMinimize=true; }

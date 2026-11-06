@@ -25,8 +25,9 @@ int main() {
     check(!cache.follow(window,10,style^WS_THICKFRAME,false,96,moved,result),"frame style change requires measurement");
     check(!cache.follow(window,10,style,false,96,{0,0,0,0},result),"invalid frame is rejected");
     m.hasMinimize=false;m.hasViewport=true;m.viewportTop=250;m.requiresVisualWidth=true;m.hasVisualMinimize=true;m.visualMinimize={754,200,794,250};
-    cache.remember(window,10,style,false,m);cache.follow(window,10,style,false,96,resized,result);
-    check(result.viewportTop==170&&result.visualMinimize.left==954&&home::layoutCaption(result).button.bottom==170,"custom viewport and measured width follow resize");
+    cache.remember(window,10,style,false,m);
+    check(!cache.follow(window,10,style,false,96,resized,result),"custom frame width change remeasures controls instead of following right edge");
+    check(cache.follow(window,10,style,false,96,moved,result)&&result.visualMinimize.left==-246,"custom controls still follow pure window movement");
     m.hasVisualMinimize=false;cache.remember(window,10,style,false,m);
     check(!cache.follow(window,10,style,false,96,moved,result),"missing custom measurement keeps retry path active");
     m.requiresVisualWidth=false;m.hasCaptionGroup=true;m.controlsLeft=754;cache.remember(window,10,style,false,m);cache.follow(window,10,style,false,96,resized,result);
